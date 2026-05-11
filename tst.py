@@ -1,6 +1,8 @@
 import os
 import sys
 
+# 替换为你实际的 Python 安装路径
+# 你的报错显示 Python 安装在: C:\Users\y1394\AppData\Local\Programs\Python\Python313
 base_path = r"C:\Users\y1394\AppData\Local\Programs\Python\Python313"
 
 os.environ['TCL_LIBRARY'] = os.path.join(base_path, 'tcl', 'tcl8.6')
@@ -17,7 +19,7 @@ HEIGHT = 600  # 屏幕高度
 ROBOT_RADIUS = 15  # 机器人半径
 SENSOR_COUNT = 180  # 360° 发出多少条传感器射线 (10度一条)
 MAX_RANGE = 200  # 超声波最大探测距离
-ROBOT_SPEED = 6  # 机器人移动速度
+ROBOT_SPEED = 9  # 机器人移动速度
 TURN_SPEED = 0.2  # 机器人转向速度 (弧度)
 
 
@@ -56,7 +58,10 @@ def get_distance(x1, y1, x2, y2):
     """计算两点间的距离"""
     return math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
 
-
+def force_function1(i,const):
+    return (-i+const)/const
+def force_function2(i,const):
+    return math.log(i+1)
 # --- 仿真主程序 ---
 class RobotSimulation:
     def __init__(self, root):
@@ -68,7 +73,7 @@ class RobotSimulation:
         self.canvas.pack()
 
         # 初始化物体和机器人
-        self.robot = Robot(150, 500, 0)
+        self.robot = Robot(100, 400, 0)
         self.obstacles = []
         self.create_environment()
 
@@ -81,67 +86,75 @@ class RobotSimulation:
         # 绘制机器人
         self.robot_ui = self.canvas.create_oval(0, 0, 0, 0, fill="blue", outline="black")
         self.heading_ui = self.canvas.create_line(0, 0, 0, 0, fill="red", width=2)
-
+        import time  # 必须导入时间库
+        self.passed_checkpoint = False  # 是否经过了半程检查点
+        self.lap_count = 0
+        self.lap_start_time = time.time()
+        self.start_time = time.time()  # 记录程序开始时间
+        self.last_lap_time = 0  # 上一圈的成绩
+        self.lap_count = 0  # 圈数
+        self.on_finish_line = False  # 状态位：防止在终点线重复计数
         # 启动仿真循环
         self.running = True
         self.animate()
 
+
     def create_environment(self):
-        """创建一个由直道和弯道组成的复合赛道"""
+        """创建一个绝对封闭、无缝隙的胶囊型环形赛道"""
         self.obstacles = []
-        track_width = ROBOT_RADIUS * 2 * 2.5  # 宽度依然保持2.5倍
 
-        # 定义赛道的中心路径点 (关键转折点)
-        path_points = [
-            (100, 100),  # 起点
-            (400, 100),  # 第一段直道结束
-            (600, 300),  # 弯道至中部
-            (400, 500),  # S弯回转
-            (100, 500),  # 底部直道
-            (100, 100)  # 回到原点形成闭环
-        ]
+        # --- 赛道参数 ---
+        # 宽度固定为机器人直径的 2.5 倍
+        track_width = ROBOT_RADIUS * 2 * 1.5
+        half_w = track_width / 2
 
-        # 扩展成平滑轨道的简易实现
-        def get_walls(p1, p2, width):
-            # 计算段向量
-            dx = p2[0] - p1[0]
-            dy = p2[1] - p1[1]
-            dist = math.sqrt(dx ** 2 + dy ** 2)
-            if dist == 0: return []
+        L = 350  # 直道的长度
+        R = 150  # 弯道的半径（中心线半径）
+        cx, cy = WIDTH // 2, HEIGHT // 2
 
-            # 单位法向量 (垂直于行进方向)
-            nx = -dy / dist
-            ny = dx / dist
+        inner_pts = []
+        outer_pts = []
 
-            # 生成内外四个点
-            i1 = (p1[0] - width / 2 * nx, p1[1] - width / 2 * ny)
-            i2 = (p2[0] - width / 2 * nx, p2[1] - width / 2 * ny)
-            o1 = (p1[0] + width / 2 * nx, p1[1] + width / 2 * ny)
-            o2 = (p2[0] + width / 2 * nx, p2[1] + width / 2 * ny)
-            return (i1, i2, o1, o2)
+        # 采样点数量（点越多越平滑）
+        steps = 30
 
-        # 遍历路径点生成墙壁
-        for i in range(len(path_points) - 1):
-            p1 = path_points[i]
-            p2 = path_points[i + 1]
-            i1, i2, o1, o2 = get_walls(p1, p2, track_width)
+        # 1. 生成右半圆路径点 (从 -90度 到 90度)
+        for i in range(steps + 1):
+            angle = -math.pi / 2 + (math.pi * i / steps)
+            # 物理坐标
+            px = cx + L / 2 + R * math.cos(angle)
+            py = cy + R * math.sin(angle)
+            # 法向量 (用于由中心向内外推导墙壁)
+            nx, ny = math.cos(angle), math.sin(angle)
 
-            # 添加内墙和外墙
-            self.obstacles.append(Obstacle(i1[0], i1[1], i2[0], i2[1]))
-            self.obstacles.append(Obstacle(o1[0], o1[1], o2[0], o2[1]))
+            inner_pts.append((px - half_w * nx, py - half_w * ny))
+            outer_pts.append((px + half_w * nx, py + half_w * ny))
 
-            # 在拐角处封闭缝隙 (连接处补线)
-            if i < len(path_points) - 2:
-                next_p2 = path_points[i + 2]
-                ni1, ni2, no1, no2 = get_walls(p2, next_p2, track_width)
-                self.obstacles.append(Obstacle(i2[0], i2[1], ni1[0], ni1[1]))
-                self.obstacles.append(Obstacle(o2[0], o2[1], no1[0], no1[1]))
+        # 2. 生成左半圆路径点 (从 90度 到 270度)
+        for i in range(steps + 1):
+            angle = math.pi / 2 + (math.pi * i / steps)
+            px = cx - L / 2 + R * math.cos(angle)
+            py = cy + R * math.sin(angle)
+            nx, ny = math.cos(angle), math.sin(angle)
 
-        # 绘制
+            inner_pts.append((px - half_w * nx, py - half_w * ny))
+            outer_pts.append((px + half_w * nx, py + half_w * ny))
+
+        # --- 核心：封闭连接 ---
+        # 使用取模运算 (%) 确保最后一个点永远和第一个点相连，形成绝对闭合
+        num_points = len(inner_pts)
+        for i in range(num_points):
+            p1_in = inner_pts[i]
+            p2_in = inner_pts[(i + 1) % num_points]
+            self.obstacles.append(Obstacle(p1_in[0], p1_in[1], p2_in[0], p2_in[1]))
+
+            p1_out = outer_pts[i]
+            p2_out = outer_pts[(i + 1) % num_points]
+            self.obstacles.append(Obstacle(p1_out[0], p1_out[1], p2_out[0], p2_out[1]))
+
+        # 3. 绘制到画布
         for obs in self.obstacles:
             self.canvas.create_line(obs.x1, obs.y1, obs.x2, obs.y2, fill="black", width=2)
-
-
     def update_sensors(self):
         """模拟 360° 超声波数据，计算距离"""
         sensor_data = []  # 存储 (角度, 距离)
@@ -202,7 +215,7 @@ class RobotSimulation:
             # --- 1. 处理前方 45° 范围 (紧急避障) ---
             if abs(rel_angle) <= math.radians(45):
                 if dist < FRONT_THRESHOLD:
-                    mag = (FRONT_THRESHOLD - dist) / FRONT_THRESHOLD
+                    mag = force_function1(dist,FRONT_THRESHOLD)
                     f_front_x += mag * math.cos(abs_angle + math.pi)
                     f_front_y += mag * math.sin(abs_angle + math.pi)
 
@@ -210,7 +223,7 @@ class RobotSimulation:
             elif math.radians(45) < abs(rel_angle) <= math.radians(90):
                 if dist < SIDE_THRESHOLD:
                     # 侧边斥力：距离越近，推向中间的力越大
-                    mag = ((SIDE_THRESHOLD - dist) / SIDE_THRESHOLD) * SIDE_FORCE_WEIGHT
+                    mag = (force_function1(dist,FRONT_THRESHOLD)) * SIDE_FORCE_WEIGHT
                     # 依然是背离障碍物的方向
                     f_side_x += mag * math.cos(abs_angle + math.pi)
                     f_side_y += mag * math.sin(abs_angle + math.pi)
@@ -266,6 +279,35 @@ class RobotSimulation:
         head_x = self.robot.x + (r + 5) * math.cos(self.robot.angle)
         head_y = self.robot.y + (r + 5) * math.sin(self.robot.angle)
         self.canvas.coords(self.heading_ui, self.robot.x, self.robot.y, head_x, head_y)
+        if self.robot.x > WIDTH / 2 and not self.on_finish_line and self.robot.y < HEIGHT / 2:
+            current_time = time.time()
+            if self.lap_start_time is not None:
+                self.last_lap_time = current_time - self.lap_start_time
+                self.lap_count += 1
+                print(f"第 {self.lap_count} 圈完成！用时: {self.last_lap_time:.2f} 秒")
+
+            self.lap_start_time = current_time
+            self.on_finish_line = True  # 标记已在终点线上
+
+        # 当机器人离开终点线区域后，重置状态位
+        if self.robot.y > HEIGHT * 0.7:
+            self.passed_checkpoint = True
+
+        # --- 逻辑 B: 到达终点线 ---
+        # 只有在“经过了检查点”的前提下，越过终点线才算一圈
+        if self.robot.x > WIDTH / 2 and self.robot.y < HEIGHT / 3:
+            if self.passed_checkpoint:
+                current_time = time.time()
+                lap_time = current_time - self.lap_start_time
+
+                # 额外保险：一圈至少要超过 1 秒才记录（防止极端情况）
+                if lap_time > 1.0:
+                    self.lap_count += 1
+                    print(f"第 {self.lap_count} 圈完成！真实用时: {lap_time:.2f} 秒")
+
+                    # 重置状态
+                    self.lap_start_time = current_time
+                    self.passed_checkpoint = False
 
         # 5. 循环
         self.root.after(20, self.animate)  # 每20毫秒刷新一次 (约50FPS)
@@ -275,4 +317,4 @@ class RobotSimulation:
 if __name__ == "__main__":
     root = tk.Tk()
     sim = RobotSimulation(root)
-    root.main
+    root.mainloop()
