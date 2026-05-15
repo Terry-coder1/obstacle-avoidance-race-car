@@ -31,27 +31,23 @@ int servo_angle = 90; // 目标舵机角度
 
 float distances[360] = {0}; // 存储每个角度的最近距离（单位：米）
 
-void computeControl(float *distances, int &out_speed, int &out_servo_angle)
-{
+
+void computeControl(float* distances, int &out_speed, int &out_servo_angle) {
   float repel_x = 0, repel_y = 0;
   int count = 0;
 
   // 1. 遍历雷达数据，计算“平均排斥力”
-  for (int angle = 0; angle < 360; angle++)
-  {
+  for (int angle = 0; angle < 360; angle++) {
     float dist = distances[angle];
-    if (dist <= 0.05f || dist > MAX_RANGE)
-      continue;
+    if (dist <= 0.05f || dist > MAX_RANGE) continue;
 
     float rel_angle = (angle > 180) ? (angle - 360) : angle;
     float rad = radians(rel_angle);
 
     // 只处理前方 180 度范围内的障碍物
-    if (abs(rel_angle) <= 90)
-    {
+    if (abs(rel_angle) <= 90) {
       float threshold = (abs(rel_angle) <= 45) ? FRONT_THRESHOLD : SIDE_THRESHOLD;
-      if (dist < threshold)
-      {
+      if (dist < threshold) {
         float weight = (threshold - dist) / threshold;
         // 累加排斥力向量 (方向与障碍物相反)
         repel_x += weight * cos(rad + M_PI);
@@ -62,16 +58,15 @@ void computeControl(float *distances, int &out_speed, int &out_servo_angle)
   }
 
   // 2. 归一化：避免障碍物点数越多力越大的问题
-  if (count > 0)
-  {
+  if (count > 0) {
     repel_x /= count;
     repel_y /= count;
   }
 
   // 3. 转向逻辑：将排斥力叠加到“前进趋势”上
   // 增大驱动力的权重(1.5)，确保 x 轴方向永远向上，防止原地打转或倒车
-  float drive_bias = 1.5f;
-  float target_x = drive_bias + repel_x;
+  float drive_bias = 1.5f; 
+  float target_x = drive_bias + repel_x; 
   float target_y = repel_y * 2.5f; // 放大 y 轴感度，让转向更灵敏
 
   float target_rad = atan2(target_y, target_x);
@@ -79,39 +74,30 @@ void computeControl(float *distances, int &out_speed, int &out_servo_angle)
 
   // 映射转向：假设 target_deg 平滑地在 -45 到 45 之间
   // 修正后的映射不再是只有极值，而是线性的
-  int final_servo = STEERING_CENTER - (int)constrain(target_deg, -30, 30);
+  int final_servo = STEERING_CENTER + (int)constrain(target_deg, -30, 30);
 
   // 4. 速度逻辑：不再受侧边力干扰，只看正前方的阻碍
-  float min_front_dist = 2.0f;
-  bool found_obstacle = false;
-
-  // 重点：只检查前方15度扇区，且严格过滤0
-  for (int a = -15; a <= 15; a++)
-  {
+  // 检查正前方 30 度内是否有极近障碍物
+  float front_dist = 2.0f;
+  for(int a = -15; a <= 15; a++) {
     int idx = (a + 360) % 360;
-    float d = distances[idx];
-    if (d > 0.05f && d < min_front_dist)
-    {
-      min_front_dist = d;
-      found_obstacle = true;
-    }
+    if (distances[idx] > 0.05f && distances[idx] < front_dist) front_dist = distances[idx];
   }
 
-  if (!found_obstacle)
-  {
-    out_speed = MAX_SPEED; // 前方极度安全
+  int final_speed = MAX_SPEED;
+  if (front_dist < FRONT_THRESHOLD) {
+    // 速度随距离线性下降，最低保留 30% 的速度用于蠕动，除非距离小于 15cm
+    float slow_factor = (front_dist - 0.15f) / (FRONT_THRESHOLD - 0.15f);
+    final_speed = MAX_SPEED * constrain(slow_factor, 0.3f, 1.0f);
+    if (front_dist < 0.15f) final_speed = 0; // 太近了，停下
   }
-  else
-  {
-    // 线性减速逻辑
-    float factor = (min_front_dist - 0.2f) / (FRONT_THRESHOLD - 0.2f);
-    out_speed = (int)(MAX_SPEED * constrain(factor, 0.4f, 1.0f));
 
-    // 只有在真的快撞上时（<15cm）才彻底停车
-    if (min_front_dist < 0.15f)
-      out_speed = 0;
-  }
+  out_speed = final_speed;
+  out_servo_angle = final_servo;
 }
+// 
+
+
 
 // void computeControl(float* distances, int &out_speed, int &out_servo_angle) {
 //   float f_front_x = 0, f_front_y = 0;
